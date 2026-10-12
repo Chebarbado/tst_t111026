@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 
 export default function TicketPanel({ employee, selectedId, sources, onChanged }) {
@@ -9,35 +9,57 @@ export default function TicketPanel({ employee, selectedId, sources, onChanged }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  // актуальный выбор — иначе после await в save ловим stale closure
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   useEffect(() => {
     if (!selectedId) {
       setTicket(null);
       return;
     }
+
+    //поздний ответ не перетерает текущий тикет
+    let cancelled = false;
+
     setLoading(true);
     setError('');
     setMessage('');
+
     api(`/tickets/${selectedId}`).then(data => {
+      if (cancelled) return; // уже другой тикет
       setTicket(data.ticket);
       setHistory(data.history);
       setSourceId(String(data.ticket.source?.id ?? ''));
-    }).catch(error => setError(error.message)).finally(() => setLoading(false));
+    }).catch(error => {
+      if (!cancelled) setError(error.message);
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+
+    return () => { cancelled = true; };
   }, [selectedId]);
 
   async function save() {
     if (!ticket || saving) return;
+    const savedId = ticket.id;
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      const data = await api(`/tickets/${ticket.id}/source`, { method: 'POST', body: JSON.stringify({ source_id: Number(sourceId) }) });
+      const data = await api(`/tickets/${savedId}/source`, {
+        method: 'POST',
+        body: JSON.stringify({ source_id: Number(sourceId) }),
+      });
+      // список можно обновить
+      onChanged(data.ticket);
+      // а карточку — когда на ней
+      if (selectedIdRef.current !== savedId) return;
       setTicket(data.ticket);
       setHistory(data.history);
       setMessage('Источник сохранён');
-      onChanged(data.ticket);
     } catch (error) {
-      setError(error.message);
+      if (selectedIdRef.current === savedId) setError(error.message);
     } finally {
       setSaving(false);
     }

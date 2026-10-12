@@ -16,13 +16,16 @@ class TicketRepository
         if (!$row) {
             return null;
         }
+        // source_id бывает NULL — без проверки тут был 500 на $source['id']
         $source = pg_fetch_assoc(query('SELECT id, name FROM sources WHERE id=$1', array($row['source_id'])));
         return array(
             'id' => (int) $row['id'],
             'title' => $row['title'],
             'description' => $row['description'],
             'status' => $row['status'],
-            'source' => array('id' => (int) $source['id'], 'name' => $source['name']),
+            'source' => $source
+                ? array('id' => (int) $source['id'], 'name' => $source['name'])
+                : null,
             'updated_at' => $row['updated_at'],
         );
     }
@@ -50,15 +53,46 @@ class TicketRepository
 
     public function changeSource($id, $sourceId, array $employee)
     {
-        $ticket = pg_fetch_assoc(query('SELECT source_id FROM tickets WHERE id=$1', array($id)));
+        // порядок для редактора: есть заявка → не архив → валидный source
+        $ticket = pg_fetch_assoc(query('SELECT source_id, status FROM tickets WHERE id=$1', array($id)));
         if (!$ticket) {
             respond(404, array('error' => 'not_found', 'message' => 'Заявка не найдена'));
+        }
+        if ($ticket['status'] === 'archived') {
+            respond(403, array('error' => 'forbidden', 'message' => 'Архивная заявка только для чтения'));
+        }
+        // строки/"2"/null/дробь — мимо; нужен именно JSON int > 0
+        if (!is_int($sourceId) || $sourceId <= 0) {
+            respond(400, array('error' => 'invalid_source', 'message' => 'Выберите источник из справочника'));
         }
         if (!pg_fetch_assoc(query('SELECT id FROM sources WHERE id=$1', array($sourceId)))) {
             respond(400, array('error' => 'invalid_source', 'message' => 'Источник не найден'));
         }
-        query('UPDATE tickets SET source_id=$1, updated_at=clock_timestamp() WHERE id=$2', array($sourceId, $id));
-        query('INSERT INTO ticket_history(ticket_id, employee_id, old_source_id, new_source_id) VALUES($1,$2,$3,$4)', array($id, $employee['id'], $ticket['source_id'], $sourceId));
+
+        $oldSourceId = $ticket['source_id'] === null ? null : (int) $ticket['source_id'];
+        // тот же источник — ок, но историю не плодим
+        if ($oldSourceId === $sourceId) {
+            return $this->find($id);
+        }
+
+        // атомарно: либо оба изменения, либо ничего
+        query('BEGIN');
+        try {
+            query(
+                'UPDATE tickets SET source_id=$1, updated_at=clock_timestamp() WHERE id=$2',
+                array($sourceId, $id)
+            );
+            // employee только из сессии, не из body
+            query(
+                'INSERT INTO ticket_history(ticket_id, employee_id, old_source_id, new_source_id) VALUES($1,$2,$3,$4)',
+                array($id, $employee['id'], $oldSourceId, $sourceId)
+            );
+            query('COMMIT');
+        } catch (Throwable $error) {
+            query('ROLLBACK');
+            throw $error;
+        }
+
         return $this->find($id);
     }
 }
