@@ -18,7 +18,6 @@ export default function TicketPanel({ employee, selectedId, sources, onChanged }
       setTicket(null);
       return;
     }
-
     //поздний ответ не перетерает текущий тикет
     let cancelled = false;
 
