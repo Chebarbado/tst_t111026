@@ -87,7 +87,7 @@ export default function TicketPanel({employee, selectedId, sources, onChanged}) 
                 {canEdit ? <div className="source-controls"><select id="source" value={sourceId}
                                                                     onChange={event => setSourceId(event.target.value)}
                                                                     disabled={saving}>
-                    <option value="" disabled>Выберите источник</option>
+                    <option value="" disabled>Не указан</option>
                     {sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select>
                     <button onClick={save}
                             disabled={saving || !sourceId}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
